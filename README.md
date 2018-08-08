@@ -1,4 +1,4 @@
-This readme provides some technical information about process hollowing in general, as well as how hollowing is implemented in some tools I'm involved in.
+This readme provides some technical information about process hollowing in general, as well as how hollowing is implemented in some tools I'm involved in. Further below there is an experimental section where some tests against AV solutions are presented.
 The pdf contains some legacy slides about process hollowing. 
 
 
@@ -62,3 +62,53 @@ But remember: BFG is "not meant to be another antivirus evasion tool".
 https://www.blackhat.com/docs/eu-17/materials/eu-17-Liberman-Lost-In-Transaction-Process-Doppelganging.pdf
 (Will probably get implemented in BFG some day...)
 
+### Evaluation against AV
+
+To somehow quantify how hollowing in BFG fares against AV, I conducted some small tests in virtual machines. For the VMs, I used the Windows IE developer images, with Windows 7 for x86 and Windows 10 for x64, respectively.
+For each architecture, I set up four VMs with trial AV endpoint solutions:
+- Windows Defender only
+- McAfee
+- Kaspersky Free
+- Sophos Home
+
+The first test was based on the question to what extent BFG'ed payload were actually detected. For the tests I used the
+`build_winXX_hollowing_revtcp_exe.sh` (where XX refers to the target architecture) build scripts. The payload used in these scripts is a reverse tcp meterpreter. The payload gets injected into a legitimate calc.exe copied to desktop. To draw a comparison, I tried executing the raw payload as well as the BFG'ed payload on each target.
+
+| x64 (Win 10)     | Raw payload detected? | BFG'ed payload detected?
+| ---------------- | --------------------- | ------------------------
+| Windows Defender | Yes                   | Yes
+| Mc Afee          | Yes                   | No
+| Kaspersky Free   | Yes                   | No
+| Sophos Home      | Yes                   | Yes
+
+| x86 (Win 7)      | Raw payload detected? | BFG'ed payload detected?
+| ---------------- | --------------------- | ------------------------
+| Windows Defender | No                    | No
+| Mc Afee          | Yes                   | No
+| Kaspersky Free   | Yes                   | Yes
+| Sophos Home      | Yes                   | Yes
+
+As this result was not quite satisfying, my next question was: Will an innocent payload also be flagged? This would at least generate some insight if the payload raised suspicion, or rather the hollowing procedure itself.
+So I did a second run, but this time I used the `build_winXX_hollowing_hello_exe.sh` scripts, assuming that popping a hello world message box would be adequately innocent.
+
+| x64 (Win 10)     | Raw payload detected? | BFG'ed payload detected?
+| ---------------- | --------------------- | ------------------------
+| Windows Defender | No                    | No
+| Mc Afee          | No                    | No
+| Kaspersky Free   | No                    | No
+| Sophos Home      | No                    | No
+
+| x86 (Win 7)      | Raw payload detected? | BFG'ed payload detected?
+| ---------------- | --------------------- | ------------------------
+| Windows Defender | No                    | No
+| Mc Afee          | No                    | No
+| Kaspersky Free   | No                    | No
+| Sophos Home      | No                    | Yes
+
+This hinted that the applied BFG stuff was not the problem. The only hit being Sophos, which caught my sequence of API calls via real-time protection (well, at least that is what it advertised on the screen...). Interestingly enough, based on the state of how far my debug outputs progressed, this interception allowed for some, let's call it grey-box-testing. Since we know the precise location where Sophos intercepted, we also know which API call triggered the high-enough suspicion level. I did not thoroughly dig into this further, but further not-so-comprehensively-written-down tests hinted that not unmapping the old target process image via NtUnmapViewOfSection at least lowered the suspiciousness score.
+
+However, the tests also indicated that the obfuscation rate was not sufficient. Though you can fill books with reasons why AVs flag binaries, the simplicity of the encoder used to disguise the payload (simple XOR) should likely be the main issue here.
+It's worth noting that I did these tests round about in Mar/Apr '18 (if I recall correctly), so the first thing I did afterwards was to write an experimental encoder not solely based on XOR. So I included some variations, you can check it out in the BFG source code. In any case, it would be wise to integrate more AV evasion capabilities, e.g. by pre-chaining [AVET](https://github.com/govolution/avet) or other AV evasion tools.
+
+Interestingly, some further "inofficial" tests indicated that detection rate fluctuates with changing AV updates. All of a sudden Kaspersky no longer flags the binary before execution, but detects the meterpreter connection as a network attack. It also seems that not all injection targets are equally monitored: Injection into svchost was flagged, injection into the deployed BFG executable however was not. I also had some cases where the meterpreter sessions worked cleanly despite presence of Sophos.
+If these results originate from changes in BFG or on behalf of AV patches is not quite clear. Conducting further tests with a newer BFG version is on the TBD list.
